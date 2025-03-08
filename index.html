@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- Version 2.1 split theo word English. meta viewport để hỗ trợ responsive -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multilingual Text Splitter</title>
+  <style>
+    /* CSS giữ nguyên */
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .container {
+      display: flex;
+      gap: 20px;
+    }
+    .input-section,
+    .output-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    textarea {
+      width: 100%;
+      height: 400px;
+      white-space: pre-wrap;
+      font-family: monospace;
+      resize: vertical;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .file-input-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hidden-file-input {
+      display: none;
+    }
+    .language-select {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .separator-input {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    /* Media query cho màn hình nhỏ */
+    @media (max-width: 768px) {
+      .container {
+        flex-direction: column;
+      }
+      .controls {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Khu vực input -->
+    <div class="input-section">
+      <h3>Input Text</h3>
+      <textarea id="inputText" placeholder="Paste your text here..."></textarea>
+
+      <div class="controls">
+        <div class="file-input-wrapper">
+          <input
+            type="file"
+            id="fileInput"
+            accept=".txt,.md,.html,.xml,.json"
+            class="hidden-file-input"
+          />
+          <button id="browseButton">Browse Text File</button>
+          <span id="fileName">No file selected</span>
+        </div>
+
+        <div class="language-select">
+          <label for="languageType">Language:</label>
+          <!-- Đặt Chinese làm mặc định -->
+          <select id="languageType">
+            <option value="chinese" selected>Chinese</option>
+            <option value="english">English</option>
+            <option value="auto">Auto Detect</option>
+          </select>
+        </div>
+
+        <label for="splitLength">Split Length:</label>
+        <input type="number" id="splitLength" value="100" min="1" />
+        <button id="splitButton">Split Text</button>
+      </div>
+    </div>
+
+    <!-- Khu vực output -->
+    <div class="output-section">
+      <h3>Text Pieces</h3>
+      <textarea id="outputText" readonly placeholder="Split text will appear here..."></textarea>
+
+      <div class="controls">
+        <div class="separator-input">
+          <label for="outputSeparator">Output Separator:</label>
+          <input type="text" id="outputSeparator" value="\n\n\n\n\n" style="width: 150px;" />
+        </div>
+        <button id="copyButton">Copy to Clipboard</button>
+        <button id="downloadButton">Download</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Khi DOM đã sẵn sàng
+    document.addEventListener("DOMContentLoaded", function () {
+      const fileInput = document.getElementById("fileInput");
+      const fileNameSpan = document.getElementById("fileName");
+      const browseButton = document.getElementById("browseButton");
+      const inputTextArea = document.getElementById("inputText");
+      const splitButton = document.getElementById("splitButton");
+      const copyButton = document.getElementById("copyButton");
+      const downloadButton = document.getElementById("downloadButton");
+      const outputTextArea = document.getElementById("outputText");
+
+      // Mở hộp thoại chọn file
+      browseButton.addEventListener("click", () => {
+        fileInput.click();
+      });
+
+      // Xử lý lúc chọn file
+      fileInput.addEventListener("change", handleFileSelect);
+
+      // Xử lý sự kiện Split
+      splitButton.addEventListener("click", splitText);
+
+      // Xử lý sao chép
+      copyButton.addEventListener("click", copyToClipboard);
+
+      // Xử lý tải xuống
+      downloadButton.addEventListener("click", downloadText);
+
+      // Đọc file đã chọn
+      function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) {
+          fileNameSpan.textContent = "No file selected";
+          return;
+        }
+        fileNameSpan.textContent = file.name;
+
+        const reader = new FileReader();
+
+        reader.onload = function (e) {
+          // Debug: log raw file contents
+          console.log("Raw file contents:", e.target.result);
+
+          const rawText = e.target.result;
+          // Chuyển CRLF, CR sang LF
+          const normalizedText = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+          inputTextArea.value = normalizedText;
+
+          // Tạo 1 Event input để giả lập
+          const inputEvent = new Event("input");
+          inputTextArea.dispatchEvent(inputEvent);
+        };
+
+        // Đọc file dưới dạng text UTF-8
+        reader.readAsText(file, "UTF-8");
+      }
+
+      // Hàm bỏ escape
+      function unescapeString(str) {
+        return str
+          .replace(/\\n/g, "\n")
+          .replace(/\\t/g, "\t")
+          .replace(/\\r/g, "\r")
+          .replace(/\\\\/g, "\\")
+          .replace(/\\"/g, '"')
+          .replace(/\\'/g, "'");
+      }
+
+      /***************************************************************
+       * TÁCH CHO TIẾNG TRUNG (Chinese): theo số ký tự
+       ***************************************************************/
+      function splitChinese(text, maxLength) {
+        const chunks = [];
+        const lines = text.split("\n");
+        let currentChunk = [];
+        let currentLength = 0;
+
+        for (let line of lines) {
+          // Nếu cộng thêm line vào chunk hiện tại vượt quá maxLength
+          if (currentLength + line.length > maxLength && currentChunk.length > 0) {
+            chunks.push(currentChunk.join("\n"));
+            currentChunk = [];
+            currentLength = 0;
+          }
+          currentChunk.push(line);
+          currentLength += line.length + 1;
+        }
+
+        // Đẩy phần còn lại vào mảng
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk.join("\n"));
+        }
+
+        return chunks;
+      }
+
+      /***************************************************************
+       * TÁCH CHO TIẾNG ANH (English): dựa trên số từ,
+       * không chia cắt đoạn văn. Tìm điểm cắt đoạn văn gần số từ được nhập.
+       ***************************************************************/
+      function splitEnglish(text, maxWords) {
+        // Tách văn bản thành các đoạn văn. Giả sử đoạn văn được ngăn cách bởi hai dòng mới (\n\n)
+        const paragraphs = text.split(/\n\s*/);
+        const chunks = [];
+        let currentChunk = [];
+        let currentWordCount = 0;
+
+        // Hàm đếm số từ trong một đoạn văn
+        function countWords(str) {
+          return str.trim().split(/\s+/).filter(Boolean).length;
+        }
+
+        for (let para of paragraphs) {
+          const paraWordCount = countWords(para);
+
+          // Nếu thêm đoạn văn này vượt quá maxWords và đã có đoạn văn trong chunk hiện tại
+          if (currentWordCount + paraWordCount > maxWords && currentChunk.length > 0) {
+            // Đẩy chunk hiện tại vào kết quả
+            chunks.push(currentChunk.join("\n\n"));
+            // Reset các biến để bắt đầu chunk mới
+            currentChunk = [];
+            currentWordCount = 0;
+          }
+
+          // Thêm đoạn văn vào chunk hiện tại
+          currentChunk.push(para);
+          currentWordCount += paraWordCount;
+        }
+
+        // Đẩy phần còn lại vào chunks nếu có
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk.join("\n\n"));
+        }
+
+        return chunks;
+      }
+
+      /***************************************************************
+       * TÁCH VĂN BẢN TỔNG
+       * - Nếu là Chinese → dùng splitChinese
+       * - Nếu là English → dùng splitEnglish
+       * - Nếu là Auto Detect (hoặc còn lại) → tạm dùng splitChinese
+       ***************************************************************/
+      function splitText() {
+        const inputText = inputTextArea.value;
+        const splitLength = parseInt(document.getElementById("splitLength").value);
+        const languageType = document.getElementById("languageType").value;
+        const rawSeparator = document.getElementById("outputSeparator").value;
+        const outputSeparator = unescapeString(rawSeparator);
+
+        let chunks = [];
+
+        if (languageType === "english") {
+          chunks = splitEnglish(inputText, splitLength);
+        } else if (languageType === "chinese") {
+          chunks = splitChinese(inputText, splitLength);
+        } else {
+          // Tạm thời với "auto" => dùng chung logic của Chinese
+          chunks = splitChinese(inputText, splitLength);
+        }
+
+        outputTextArea.value = chunks.join(outputSeparator);
+      }
+
+      // Sao chép text ra clipboard (API hiện đại)
+      function copyToClipboard() {
+        const text = outputTextArea.value;
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            alert("Copied to Clipboard!");
+          })
+          .catch((err) => {
+            console.error("Failed to copy: ", err);
+          });
+      }
+
+      // Tải file .txt
+      function downloadText() {
+        const text = outputTextArea.value;
+        const blob = new Blob([text], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "split_text.txt";
+        a.click();
+
+        URL.revokeObjectURL(url);
+      }
+    });
+  </script>
+</body>
+</html>
